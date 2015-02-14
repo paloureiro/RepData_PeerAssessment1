@@ -1,25 +1,164 @@
+Peer Assignment 1 - Reproducible Research Course
+=================
+
+----
+**Loading and processing the data into a format** 
+**suitable for analysis**
+  
+The data is read with `read.csv`, cached in memory and transformed in a `tbl_df` (see `dyplr` vignettes).
+```{r load, echo=TRUE, cache=TRUE}
+library(knitr)
+library(dplyr)
+
+activity_df <- tbl_df(read.csv("activity.csv"))
+# Discarding the "0 steps" values
+non_zero_activity <- filter(activity_df,steps != 0)
+```
+
+----
+**Histogram of the total number of steps per day.**
+  
+This code chunk uses the chain method of `dplyr` via the `%>%` operator in order to calculate the total number of steps per day and plots the histogram of the obtained values. The function `hist` of the base package `graphics` was used binning the data in 20 levels.
+  
+```{r n_steps, echo=TRUE}
+steps_df <- activity_df %>%
+        group_by(date) %>%
+        summarise(n_steps = sum(steps,na.rm = T))
+steps_df <- filter(steps_df,n_steps != 0)
+hist(as.integer(steps_df$n_steps),breaks=20, main = "Total number of steps per day", 
+     xlab = "Time interval (min)", ylab = "Frequency")
+```
+
+----
+**Calculation of the mean and median of the total number of steps per day**
+  
+The `dplyr` function `summarise` was used to obtain the mean and median.
+```{r mean_median, echo=TRUE}
+mean_steps_df <- non_zero_activity %>%
+        group_by(date) %>%
+        summarise(mean_steps = mean(steps,na.rm = T))
+
+median_steps_df <- non_zero_activity %>%
+        group_by(date) %>%
+        summarise(median_steps = median(steps,na.rm = T))
+results_by_day <- merge(mean_steps_df,median_steps_df,by="date")
+names(results_by_day) <- c("date","mean_steps","median_steps")
+print(results_by_day)
+```
+
 ---
-title: "Reproducible Research: Peer Assessment 1"
-output: 
-  html_document:
-    keep_md: true
+**Calculation of the average daily activity pattern**
+  
+Here, the number of steps per interval averaged by date is calculated. Intervals that returned zero in the original data, were discarded. The result is plotted as a time series graph.
+```{r time_series, echo=TRUE}
+t_series <- activity_df %>%
+        filter(steps != 0) %>%
+        group_by(interval) %>%
+        summarise(mean(steps,na.rm = T))
+names(t_series) <- c("interval", "steps")
+plot(t_series$interval,t_series$steps,type = "l",xlab="Time (min)",ylab = "Number of steps") 
+```
+
+The interval in wich the number of steps is maximal is 835 with 352.48 steps:
+```{r max, echo=TRUE}        
+filter(t_series, steps == max(steps))
+
+```
+
 ---
+**Imputing missing values**
+  
+The NA values that are interspersed among the `steps` values in the original dataset were replaced with the 
+average number of steps of the corresponding day. To accomplish this, the `data.table` package was used.
+  
+First, the number of NAs is calculated (2304 was the obtained value). 
+  
+See calculation below:
+```{r missing_values, echo=TRUE}
+na_df <-activity_df %>%
+        filter(is.na(steps)==T) 
 
+print(nrow(na_df))
+```
 
-## Loading and preprocessing the data
+Original data (activity_df) and the data frame with the daily average of steps (mean_steps_df) are transformed to a `data.table`. 
 
+```{r imputing_data, echo=TRUE}
+library(data.table)
 
+activity_dt <- data.table(activity_df,key="date")
+mean_steps_dt <- data.table(mean_steps_df,key="date")
+```
 
-## What is mean total number of steps taken per day?
+The main step goes here, in which steps with NAs are replaced with the day average:
+```{r, echo=TRUE}
+imputed_data <- mean_steps_dt[activity_dt][,steps := ifelse(is.na(steps),mean_steps,steps)]
+```
+There are days that were not used in the measurements (are filled with NAs). These are discarded:
+```{r, echo=TRUE}
+imputed_data <- imputed_data[complete.cases(imputed_data)]
+```
 
+Zero values are discarded:
+```{r, echo=TRUE}
+non_zero_imputed <- filter(imputed_data,steps != 0)
+```
+The column wih average values is also discarded:
+```{r, echo=TRUE}
+non_zero_imputed <- non_zero_imputed[,mean_steps := NULL]
+```
+Mean, median and total number of steps are calculated and a histogram is plotted:
+```{r, echo=TRUE}
+mean_imputed <- non_zero_imputed[,mean(steps),by=date]
 
+median_imputed <- non_zero_imputed[,median(steps),by=date]
 
-## What is the average daily activity pattern?
+n_steps_imputed <- non_zero_imputed[,sum(steps),by=date]
 
+par(mfrow = c(2,1))
+hist(as.integer(n_steps_imputed$V1),breaks=20, main = "Total number of steps per day (imputed NAs)", 
+     xlab = "Time interval (min)", ylab = "Frequency")
+hist(as.integer(steps_df$n_steps),breaks=20, main = "Total number of steps per day(with deleted NAs)", 
+     xlab = "Time interval (min)", ylab = "Frequency")
 
+```
+  
+The values do not differ significantly from the values of the first part of the assignement (in which NAs were discarded). This can be ascertained if one compares with the two histograms.
+  
+  
+---
+**Studiyng the effect of the weekday on the displayed activity**
+  
+To investigate if the pattern of activity was different in weekdays or during the weekend, the following code was run.
+  
+First, the function `weekdays` was used to create a vector of weekdays corresponding to the cleaned data set(`non_zero_imputed`).
+```{r weekdays, echo=TRUE}
 
-## Imputing missing values
+weekday_vec <- weekdays(as.Date(non_zero_imputed$date))
+```
+A factor variable was created (`test_week`) splitting the data in `weekend` and `weekday`. The resulting vector was pasted to the data by the `dplyr` function `mutate`.
+```{r, echo=TRUE}
+test_week <- ifelse(weekday_vec %in% c("sábado", "domingo"), "weekend", "weekday")
+non_zero_imputed <- mutate(non_zero_imputed,test_week)
+```
+Two time series are created (`t_series_weekday` and `t_series_weekend`) and two time series plots are displayed. Together, the data suggest that at the weekends there is more activity in the 1500-2000 steps range.
+```{r,echo=TRUE}
+t_series_week <- non_zero_imputed %>%
+        group_by(test_week,interval) %>%
+        summarise(mean(steps))
+t_series_weekend <- t_series_week[test_week == "weekend"]
+setnames(t_series_weekend,c("test_week","interval","mean(steps)"),c("test_week","interval", "mean_steps"))
+t_series_weekday <- t_series_week[test_week == "weekday"]
+setnames(t_series_weekday,c("test_week","interval","mean(steps)"),c("test_week","interval", "mean_steps"))
 
+par(mfrow = c(2,1))
+plot(t_series_weekday$interval,t_series_weekday$mean_steps,type = "l",main = "Weekdays",
+     xlab="Time (min)",ylab = "Number of steps")
 
-
-## Are there differences in activity patterns between weekdays and weekends?
+plot(t_series_weekend$interval,t_series_weekend$mean_steps,type = "l",main = "Weekend",
+     xlab="Time (min)",ylab = "Number of steps")
+```  
+  
+Together, the data suggest that at the weekends there is more activity in the 1500-2000 steps range.
+  
+---
